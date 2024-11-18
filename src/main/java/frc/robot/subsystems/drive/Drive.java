@@ -19,6 +19,7 @@ import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.pathfinding.Pathfinding;
 import com.pathplanner.lib.util.PathPlannerLogging;
 import com.pathplanner.lib.util.ReplanningConfig;
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -28,7 +29,7 @@ import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
-import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.drive.DifferentialDrive.WheelSpeeds;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
@@ -131,11 +132,43 @@ public class Drive extends SubsystemBase {
         feedforward.calculate(rightRadPerSec));
   }
 
+  private WheelSpeeds arcadeDriveIK(double xSpeed, double zRotation, boolean squareInputs) {
+    xSpeed = MathUtil.clamp(xSpeed, -1.0, 1.0);
+    zRotation = MathUtil.clamp(zRotation, -1.0, 1.0);
+
+    // Square the inputs (while preserving the sign) to increase fine control
+    // while permitting full power.
+    if (squareInputs) {
+      xSpeed = Math.copySign(xSpeed * xSpeed, xSpeed);
+      zRotation = Math.copySign(zRotation * zRotation, zRotation);
+    }
+
+    double leftSpeed = xSpeed - zRotation;
+    double rightSpeed = xSpeed + zRotation;
+
+    // Find the maximum possible value of (throttle + turn) along the vector
+    // that the joystick is pointing, then desaturate the wheel speeds
+    double greaterInput = Math.max(Math.abs(xSpeed), Math.abs(zRotation));
+    double lesserInput = Math.min(Math.abs(xSpeed), Math.abs(zRotation));
+    if (greaterInput == 0.0) {
+      return new WheelSpeeds(0.0, 0.0);
+    }
+    double saturatedInput = (greaterInput + lesserInput) / greaterInput;
+    leftSpeed /= saturatedInput;
+    rightSpeed /= saturatedInput;
+
+    return new WheelSpeeds(leftSpeed, rightSpeed);
+  }
+
   /** Run open loop based on stick positions. */
   public void driveArcade(double xSpeed, double zRotation) {
+    xSpeed = xSpeed * 0.35d;
+    zRotation *= 0.35d;
     Logger.recordOutput("Target X Speed", xSpeed);
     Logger.recordOutput("Target Z Rotation", zRotation);
-    var speeds = DifferentialDrive.arcadeDriveIK(xSpeed, -zRotation, true);
+    var speeds = arcadeDriveIK(xSpeed, -zRotation, true);
+    Logger.recordOutput("Left drive motor %", speeds.left);
+    Logger.recordOutput("Right drive motor %", speeds.right);
     io.setVoltage(speeds.left * 12.0, speeds.right * 12.0);
   }
 
